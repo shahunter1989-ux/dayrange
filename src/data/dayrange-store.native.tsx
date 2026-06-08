@@ -6,37 +6,42 @@ import {
   defaultProfile,
   getProfile,
   getReadings,
+  getReportHistory,
   getReminders,
   insertReading,
+  insertReportHistory,
   makeId,
   removeReading,
   setProfile,
   setReminder,
 } from "@/data/database";
 import { cancelReminderNotification, scheduleReminderNotification } from "@/services/reminders";
-import { AddReadingInput, Profile, Reading, Reminder } from "@/types/domain";
+import { AddReadingInput, Profile, Reading, Reminder, ReportHistoryItem } from "@/types/domain";
 import { toMgdl } from "@/utils/glucose";
 
 type DayRangeContextValue = {
   profile: Profile;
   readings: Reading[];
   reminders: Reminder[];
+  reportHistory: ReportHistoryItem[];
   refresh: () => Promise<void>;
   addReading: (input: AddReadingInput) => Promise<void>;
   deleteReading: (id: string) => Promise<void>;
   saveProfile: (profile: Profile) => Promise<void>;
   saveReminder: (reminder: Reminder) => Promise<void>;
+  addReportHistory: (items: ReportHistoryItem[]) => Promise<void>;
 };
 
 const DayRangeContext = createContext<DayRangeContextValue | null>(null);
 
 async function readStore(db: SQLiteDatabase) {
-  const [nextProfile, nextReadings, nextReminders] = await Promise.all([
+  const [nextProfile, nextReadings, nextReminders, nextReportHistory] = await Promise.all([
     getProfile(db),
     getReadings(db),
     getReminders(db),
+    getReportHistory(db),
   ]);
-  return { nextProfile, nextReadings, nextReminders };
+  return { nextProfile, nextReadings, nextReminders, nextReportHistory };
 }
 
 export function DayRangeProvider({ children }: { children: ReactNode }) {
@@ -44,21 +49,24 @@ export function DayRangeProvider({ children }: { children: ReactNode }) {
   const [profile, setProfileState] = useState<Profile>(defaultProfile);
   const [readings, setReadings] = useState<Reading[]>([]);
   const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [reportHistory, setReportHistory] = useState<ReportHistoryItem[]>([]);
 
   const refresh = useCallback(async () => {
-    const { nextProfile, nextReadings, nextReminders } = await readStore(db);
+    const { nextProfile, nextReadings, nextReminders, nextReportHistory } = await readStore(db);
     setProfileState(nextProfile);
     setReadings(nextReadings);
     setReminders(nextReminders);
+    setReportHistory(nextReportHistory);
   }, [db]);
 
   useEffect(() => {
     let active = true;
-    readStore(db).then(({ nextProfile, nextReadings, nextReminders }) => {
+    readStore(db).then(({ nextProfile, nextReadings, nextReminders, nextReportHistory }) => {
       if (active) {
         setProfileState(nextProfile);
         setReadings(nextReadings);
         setReminders(nextReminders);
+        setReportHistory(nextReportHistory);
       }
     });
     return () => {
@@ -121,18 +129,28 @@ export function DayRangeProvider({ children }: { children: ReactNode }) {
     [db, refresh]
   );
 
+  const addReportHistory = useCallback(
+    async (items: ReportHistoryItem[]) => {
+      await insertReportHistory(db, items);
+      await refresh();
+    },
+    [db, refresh]
+  );
+
   const value = useMemo(
     () => ({
       profile,
       readings,
       reminders,
+      reportHistory,
       refresh,
       addReading,
       deleteReading,
       saveProfile,
       saveReminder,
+      addReportHistory,
     }),
-    [profile, readings, reminders, refresh, addReading, deleteReading, saveProfile, saveReminder]
+    [profile, readings, reminders, reportHistory, refresh, addReading, deleteReading, saveProfile, saveReminder, addReportHistory]
   );
 
   return <DayRangeContext.Provider value={value}>{children}</DayRangeContext.Provider>;

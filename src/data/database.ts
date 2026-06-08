@@ -1,7 +1,7 @@
 import type { SQLiteDatabase } from "expo-sqlite";
 
 import { defaultReminders } from "@/constants/options";
-import { Profile, Reading, Reminder } from "@/types/domain";
+import { Profile, Reading, Reminder, ReportHistoryItem } from "@/types/domain";
 
 export const defaultProfile: Profile = {
   id: "default",
@@ -46,80 +46,112 @@ type ReminderRow = {
   notification_id: string | null;
 };
 
+type ReportHistoryRow = {
+  id: string;
+  file_name: string;
+  range_type: string;
+  start_date: string;
+  end_date: string;
+  generated_at: string;
+  reading_count: number;
+  part_index: number;
+  part_count: number;
+  platform: string;
+};
+
 export async function migrateDatabase(db: SQLiteDatabase) {
   const current = await db.getFirstAsync<{ user_version: number }>("PRAGMA user_version");
-  const version = current?.user_version ?? 0;
-  if (version >= 1) {
-    return;
-  }
+  let version = current?.user_version ?? 0;
 
-  await db.execAsync(`
-    PRAGMA journal_mode = WAL;
-    CREATE TABLE IF NOT EXISTS profile (
-      id TEXT PRIMARY KEY NOT NULL,
-      data TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS readings (
-      id TEXT PRIMARY KEY NOT NULL,
-      glucose_mgdl REAL NOT NULL,
-      display_value REAL NOT NULL,
-      display_unit TEXT NOT NULL,
-      recorded_at TEXT NOT NULL,
-      timing TEXT NOT NULL,
-      meal_label TEXT,
-      carbs_grams REAL,
-      medication_note TEXT,
-      activity_note TEXT,
-      notes TEXT,
-      tags TEXT NOT NULL,
-      symptoms TEXT NOT NULL,
-      mood TEXT,
-      source TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS readings_recorded_at_idx ON readings(recorded_at);
-    CREATE TABLE IF NOT EXISTS context_events (
-      id TEXT PRIMARY KEY NOT NULL,
-      reading_id TEXT,
-      kind TEXT NOT NULL,
-      label TEXT NOT NULL,
-      value TEXT,
-      timestamp TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS reminders (
-      id TEXT PRIMARY KEY NOT NULL,
-      kind TEXT NOT NULL,
-      label TEXT NOT NULL,
-      hour INTEGER NOT NULL,
-      minute INTEGER NOT NULL,
-      enabled INTEGER NOT NULL,
-      notification_id TEXT
-    );
-  `);
+  if (version < 1) {
+    await db.execAsync(`
+      PRAGMA journal_mode = WAL;
+      CREATE TABLE IF NOT EXISTS profile (
+        id TEXT PRIMARY KEY NOT NULL,
+        data TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS readings (
+        id TEXT PRIMARY KEY NOT NULL,
+        glucose_mgdl REAL NOT NULL,
+        display_value REAL NOT NULL,
+        display_unit TEXT NOT NULL,
+        recorded_at TEXT NOT NULL,
+        timing TEXT NOT NULL,
+        meal_label TEXT,
+        carbs_grams REAL,
+        medication_note TEXT,
+        activity_note TEXT,
+        notes TEXT,
+        tags TEXT NOT NULL,
+        symptoms TEXT NOT NULL,
+        mood TEXT,
+        source TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS readings_recorded_at_idx ON readings(recorded_at);
+      CREATE TABLE IF NOT EXISTS context_events (
+        id TEXT PRIMARY KEY NOT NULL,
+        reading_id TEXT,
+        kind TEXT NOT NULL,
+        label TEXT NOT NULL,
+        value TEXT,
+        timestamp TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS reminders (
+        id TEXT PRIMARY KEY NOT NULL,
+        kind TEXT NOT NULL,
+        label TEXT NOT NULL,
+        hour INTEGER NOT NULL,
+        minute INTEGER NOT NULL,
+        enabled INTEGER NOT NULL,
+        notification_id TEXT
+      );
+    `);
 
-  await db.runAsync(
-    "INSERT OR IGNORE INTO profile (id, data, updated_at) VALUES (?, ?, ?)",
-    defaultProfile.id,
-    JSON.stringify(defaultProfile),
-    defaultProfile.updatedAt
-  );
-
-  for (const reminder of defaultReminders) {
     await db.runAsync(
-      `INSERT OR IGNORE INTO reminders (id, kind, label, hour, minute, enabled, notification_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      reminder.id,
-      reminder.kind,
-      reminder.label,
-      reminder.hour,
-      reminder.minute,
-      reminder.enabled ? 1 : 0,
-      reminder.notificationId
+      "INSERT OR IGNORE INTO profile (id, data, updated_at) VALUES (?, ?, ?)",
+      defaultProfile.id,
+      JSON.stringify(defaultProfile),
+      defaultProfile.updatedAt
     );
+
+    for (const reminder of defaultReminders) {
+      await db.runAsync(
+        `INSERT OR IGNORE INTO reminders (id, kind, label, hour, minute, enabled, notification_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        reminder.id,
+        reminder.kind,
+        reminder.label,
+        reminder.hour,
+        reminder.minute,
+        reminder.enabled ? 1 : 0,
+        reminder.notificationId
+      );
+    }
+
+    await db.execAsync("PRAGMA user_version = 1");
+    version = 1;
   }
 
-  await db.execAsync("PRAGMA user_version = 1");
+  if (version < 2) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS report_history (
+        id TEXT PRIMARY KEY NOT NULL,
+        file_name TEXT NOT NULL,
+        range_type TEXT NOT NULL,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        generated_at TEXT NOT NULL,
+        reading_count INTEGER NOT NULL,
+        part_index INTEGER NOT NULL,
+        part_count INTEGER NOT NULL,
+        platform TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS report_history_generated_at_idx ON report_history(generated_at);
+      PRAGMA user_version = 2;
+    `);
+  }
 }
 
 export async function getProfile(db: SQLiteDatabase): Promise<Profile> {
@@ -231,6 +263,45 @@ export async function setReminder(db: SQLiteDatabase, reminder: Reminder): Promi
     reminder.enabled ? 1 : 0,
     reminder.notificationId
   );
+}
+
+export async function getReportHistory(db: SQLiteDatabase): Promise<ReportHistoryItem[]> {
+  const rows = await db.getAllAsync<ReportHistoryRow>(
+    "SELECT * FROM report_history ORDER BY generated_at DESC LIMIT 20"
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    fileName: row.file_name,
+    rangeType: row.range_type === "day" || row.range_type === "month" ? row.range_type : "week",
+    startDate: row.start_date,
+    endDate: row.end_date,
+    generatedAt: row.generated_at,
+    readingCount: row.reading_count,
+    partIndex: row.part_index,
+    partCount: row.part_count,
+    platform: row.platform === "web" ? "web" : "native",
+  }));
+}
+
+export async function insertReportHistory(db: SQLiteDatabase, items: ReportHistoryItem[]): Promise<void> {
+  for (const item of items) {
+    await db.runAsync(
+      `INSERT OR REPLACE INTO report_history (
+        id, file_name, range_type, start_date, end_date, generated_at, reading_count,
+        part_index, part_count, platform
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      item.id,
+      item.fileName,
+      item.rangeType,
+      item.startDate,
+      item.endDate,
+      item.generatedAt,
+      item.readingCount,
+      item.partIndex,
+      item.partCount,
+      item.platform
+    );
+  }
 }
 
 export function makeId(prefix: string): string {

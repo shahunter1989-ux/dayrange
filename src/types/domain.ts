@@ -21,6 +21,40 @@ export type ReminderKind = "fasting" | "after_dinner" | "medication" | "appointm
 
 export type ReportRange = 7 | 14 | 30;
 
+export type ReportRangeType = "day" | "week" | "month";
+
+export type ReportHistoryItem = {
+  id: string;
+  fileName: string;
+  rangeType: ReportRangeType;
+  startDate: string;
+  endDate: string;
+  generatedAt: string;
+  readingCount: number;
+  partIndex: number;
+  partCount: number;
+  platform: "native" | "web";
+};
+
+export type ReportExportPart = {
+  fileName: string;
+  rangeType: ReportRangeType;
+  startDate: string;
+  endDate: string;
+  readingCount: number;
+  partIndex: number;
+  partCount: number;
+};
+
+export type ReportExportPlan = {
+  rangeType: ReportRangeType;
+  startDate: string;
+  endDate: string;
+  estimatedPages: number;
+  shouldSplit: boolean;
+  parts: ReportExportPart[];
+};
+
 export type ReadingSource = "manual";
 
 export type Reading = {

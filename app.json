@@ -19,7 +19,16 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "name": "DayRange",
+      "shortName": "DayRange",
+      "lang": "en-US",
+      "scope": "/dayrange/",
+      "startUrl": ".",
+      "display": "standalone",
+      "themeColor": "#1E6F5C",
+      "backgroundColor": "#F7FAF8",
+      "description": "DayRange helps people track and organize manually entered glucose readings locally."
     },
     "experiments": {
       "baseUrl": "/dayrange"

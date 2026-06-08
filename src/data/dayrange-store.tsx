@@ -2,24 +2,27 @@ import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, 
 
 import { defaultReminders } from "@/constants/options";
 import { defaultProfile, makeId } from "@/data/database";
-import { AddReadingInput, Profile, Reading, Reminder } from "@/types/domain";
+import { AddReadingInput, Profile, Reading, Reminder, ReportHistoryItem } from "@/types/domain";
 import { toMgdl } from "@/utils/glucose";
 
 type DayRangeContextValue = {
   profile: Profile;
   readings: Reading[];
   reminders: Reminder[];
+  reportHistory: ReportHistoryItem[];
   refresh: () => Promise<void>;
   addReading: (input: AddReadingInput) => Promise<void>;
   deleteReading: (id: string) => Promise<void>;
   saveProfile: (profile: Profile) => Promise<void>;
   saveReminder: (reminder: Reminder) => Promise<void>;
+  addReportHistory: (items: ReportHistoryItem[]) => Promise<void>;
 };
 
 type WebStore = {
   profile: Profile;
   readings: Reading[];
   reminders: Reminder[];
+  reportHistory: ReportHistoryItem[];
 };
 
 const STORAGE_KEY = "dayrange-web-store";
@@ -30,6 +33,7 @@ function initialStore(): WebStore {
     profile: defaultProfile,
     readings: [],
     reminders: defaultReminders,
+    reportHistory: [],
   };
 }
 
@@ -51,6 +55,7 @@ function readWebStore(): WebStore {
       profile: { ...defaultProfile, ...parsed.profile },
       readings: parsed.readings ?? [],
       reminders: parsed.reminders ?? defaultReminders,
+      reportHistory: parsed.reportHistory ?? [],
     };
   } catch {
     return initialStore();
@@ -150,18 +155,30 @@ export function DayRangeProvider({ children }: { children: ReactNode }) {
     [persist]
   );
 
+  const addReportHistory = useCallback(
+    async (items: ReportHistoryItem[]) => {
+      persist((current) => ({
+        ...current,
+        reportHistory: [...items, ...current.reportHistory].slice(0, 20),
+      }));
+    },
+    [persist]
+  );
+
   const value = useMemo(
     () => ({
       profile: store.profile,
       readings: store.readings,
       reminders: store.reminders,
+      reportHistory: store.reportHistory,
       refresh,
       addReading,
       deleteReading,
       saveProfile,
       saveReminder,
+      addReportHistory,
     }),
-    [store, refresh, addReading, deleteReading, saveProfile, saveReminder]
+    [store, refresh, addReading, deleteReading, saveProfile, saveReminder, addReportHistory]
   );
 
   return <DayRangeContext.Provider value={value}>{children}</DayRangeContext.Provider>;
