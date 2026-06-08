@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en-US">
   <head>
     <meta charset="utf-8" />
     <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
@@ -23,7 +23,12 @@
         flex: 1;
       }
     </style>
-  <link rel="icon" href="/dayrange/favicon.ico" /></head>
+  <meta name="theme-color" content="#1E6F5C">
+<meta name="description" content="DayRange helps people track and organize manually entered glucose readings locally.">
+<link rel="icon" href="/dayrange/favicon.ico" />
+<link rel="manifest" href="/dayrange/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/dayrange/dayrange-icon.svg">
+</head>
 
   <body>
     <!-- Use static rendering with Expo Router to support running without JavaScript. -->
@@ -32,6 +37,15 @@
     </noscript>
     <!-- The root element for your Expo app. -->
     <div id="root"></div>
-  <script src="/dayrange/_expo/static/js/web/entry-e18042b69096716bf3b1e8fb123e674e.js" defer></script>
+  <script src="/dayrange/_expo/static/js/web/entry-66e1f8d3b527fa1e354227e45b5cd888.js" defer></script>
+
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", function () {
+    var base = window.location.pathname.indexOf("/dayrange") === 0 ? "/dayrange" : "";
+    navigator.serviceWorker.register(base + "/service-worker.js", { scope: base + "/" }).catch(function () {});
+  });
+}
+</script>
 </body>
 </html>
