@@ -15,5 +15,11 @@
         "app/*"
       ]
     }
-  }
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.native.ts",
+    "**/*.native.tsx"
+  ]
 }

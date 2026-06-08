@@ -21,6 +21,9 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
+    "experiments": {
+      "baseUrl": "/dayrange"
+    },
     "plugins": [
       "expo-router",
       "expo-notifications",

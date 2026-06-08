@@ -1,4 +1,4 @@
-import { SQLiteDatabase } from "expo-sqlite";
+import type { SQLiteDatabase } from "expo-sqlite";
 
 import { defaultReminders } from "@/constants/options";
 import { Profile, Reading, Reminder } from "@/types/domain";

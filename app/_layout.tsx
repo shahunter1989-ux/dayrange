@@ -1,12 +1,10 @@
 import * as Notifications from "expo-notifications";
 import { Stack } from "expo-router";
-import { SQLiteProvider } from "expo-sqlite";
 import { Suspense } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 
+import { AppDataProvider } from "@/data/app-data-provider";
 import { BiometricGate } from "@/components/biometric-gate";
-import { DayRangeProvider } from "@/data/dayrange-store";
-import { migrateDatabase } from "@/data/database";
 import { colors } from "@/theme";
 
 Notifications.setNotificationHandler({
@@ -40,29 +38,27 @@ function LoadingScreen() {
 export default function RootLayout() {
   return (
     <Suspense fallback={<LoadingScreen />}>
-      <SQLiteProvider databaseName="dayrange.db" onInit={migrateDatabase} useSuspense>
-        <DayRangeProvider>
-          <BiometricGate>
-            <Stack
-              screenOptions={{
-                headerLargeTitle: true,
-                headerShadowVisible: false,
-                contentStyle: { backgroundColor: colors.background },
+      <AppDataProvider>
+        <BiometricGate>
+          <Stack
+            screenOptions={{
+              headerLargeTitle: true,
+              headerShadowVisible: false,
+              contentStyle: { backgroundColor: colors.background },
+            }}
+          >
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen
+              name="add-reading"
+              options={{
+                title: "Add Reading",
+                presentation: "modal",
+                headerLargeTitle: false,
               }}
-            >
-              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-              <Stack.Screen
-                name="add-reading"
-                options={{
-                  title: "Add Reading",
-                  presentation: "modal",
-                  headerLargeTitle: false,
-                }}
-              />
-            </Stack>
-          </BiometricGate>
-        </DayRangeProvider>
-      </SQLiteProvider>
+            />
+          </Stack>
+        </BiometricGate>
+      </AppDataProvider>
     </Suspense>
   );
 }

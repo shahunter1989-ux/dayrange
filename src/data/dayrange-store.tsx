@@ -1,18 +1,7 @@
-import { useSQLiteContext } from "expo-sqlite";
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
-import {
-  defaultProfile,
-  getProfile,
-  getReadings,
-  getReminders,
-  insertReading,
-  makeId,
-  removeReading,
-  setProfile,
-  setReminder,
-} from "@/data/database";
-import { cancelReminderNotification, scheduleReminderNotification } from "@/services/reminders";
+import { defaultReminders } from "@/constants/options";
+import { defaultProfile, makeId } from "@/data/database";
 import { AddReadingInput, Profile, Reading, Reminder } from "@/types/domain";
 import { toMgdl } from "@/utils/glucose";
 
@@ -27,43 +16,79 @@ type DayRangeContextValue = {
   saveReminder: (reminder: Reminder) => Promise<void>;
 };
 
+type WebStore = {
+  profile: Profile;
+  readings: Reading[];
+  reminders: Reminder[];
+};
+
+const STORAGE_KEY = "dayrange-web-store";
 const DayRangeContext = createContext<DayRangeContextValue | null>(null);
 
-async function readStore(db: ReturnType<typeof useSQLiteContext>) {
-  const [nextProfile, nextReadings, nextReminders] = await Promise.all([
-    getProfile(db),
-    getReadings(db),
-    getReminders(db),
-  ]);
-  return { nextProfile, nextReadings, nextReminders };
+function initialStore(): WebStore {
+  return {
+    profile: defaultProfile,
+    readings: [],
+    reminders: defaultReminders,
+  };
+}
+
+function canUseStorage() {
+  return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+}
+
+function readWebStore(): WebStore {
+  if (!canUseStorage()) {
+    return initialStore();
+  }
+  const raw = window.localStorage.getItem(STORAGE_KEY);
+  if (!raw) {
+    return initialStore();
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<WebStore>;
+    return {
+      profile: { ...defaultProfile, ...parsed.profile },
+      readings: parsed.readings ?? [],
+      reminders: parsed.reminders ?? defaultReminders,
+    };
+  } catch {
+    return initialStore();
+  }
+}
+
+function writeWebStore(store: WebStore) {
+  if (canUseStorage()) {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+  }
 }
 
 export function DayRangeProvider({ children }: { children: ReactNode }) {
-  const db = useSQLiteContext();
-  const [profile, setProfileState] = useState<Profile>(defaultProfile);
-  const [readings, setReadings] = useState<Reading[]>([]);
-  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [store, setStore] = useState<WebStore>(initialStore);
 
   const refresh = useCallback(async () => {
-    const { nextProfile, nextReadings, nextReminders } = await readStore(db);
-    setProfileState(nextProfile);
-    setReadings(nextReadings);
-    setReminders(nextReminders);
-  }, [db]);
+    setStore(readWebStore());
+  }, []);
 
   useEffect(() => {
     let active = true;
-    readStore(db).then(({ nextProfile, nextReadings, nextReminders }) => {
+    Promise.resolve().then(() => {
       if (active) {
-        setProfileState(nextProfile);
-        setReadings(nextReadings);
-        setReminders(nextReminders);
+        setStore(readWebStore());
       }
     });
     return () => {
       active = false;
     };
-  }, [db]);
+  }, []);
+
+  const persist = useCallback((updater: (current: WebStore) => WebStore) => {
+    setStore((current) => {
+      const next = updater(current);
+      writeWebStore(next);
+      return next;
+    });
+  }, []);
 
   const addReading = useCallback(
     async (input: AddReadingInput) => {
@@ -86,52 +111,57 @@ export function DayRangeProvider({ children }: { children: ReactNode }) {
         source: "manual",
         createdAt: now,
       };
-      await insertReading(db, reading);
-      await refresh();
+      persist((current) => ({
+        ...current,
+        readings: [reading, ...current.readings].sort(
+          (a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime()
+        ),
+      }));
     },
-    [db, refresh]
+    [persist]
   );
 
   const deleteReading = useCallback(
     async (id: string) => {
-      await removeReading(db, id);
-      await refresh();
+      persist((current) => ({
+        ...current,
+        readings: current.readings.filter((reading) => reading.id !== id),
+      }));
     },
-    [db, refresh]
+    [persist]
   );
 
   const saveProfile = useCallback(
-    async (nextProfile: Profile) => {
-      await setProfile(db, nextProfile);
-      await refresh();
+    async (profile: Profile) => {
+      persist((current) => ({ ...current, profile }));
     },
-    [db, refresh]
+    [persist]
   );
 
   const saveReminder = useCallback(
-    async (nextReminder: Reminder) => {
-      await cancelReminderNotification(nextReminder.notificationId);
-      const notificationId = nextReminder.enabled
-        ? await scheduleReminderNotification({ ...nextReminder, notificationId: null })
-        : null;
-      await setReminder(db, { ...nextReminder, notificationId });
-      await refresh();
+    async (reminder: Reminder) => {
+      persist((current) => ({
+        ...current,
+        reminders: current.reminders.map((item) =>
+          item.id === reminder.id ? { ...reminder, notificationId: null } : item
+        ),
+      }));
     },
-    [db, refresh]
+    [persist]
   );
 
   const value = useMemo(
     () => ({
-      profile,
-      readings,
-      reminders,
+      profile: store.profile,
+      readings: store.readings,
+      reminders: store.reminders,
       refresh,
       addReading,
       deleteReading,
       saveProfile,
       saveReminder,
     }),
-    [profile, readings, reminders, refresh, addReading, deleteReading, saveProfile, saveReminder]
+    [store, refresh, addReading, deleteReading, saveProfile, saveReminder]
   );
 
   return <DayRangeContext.Provider value={value}>{children}</DayRangeContext.Provider>;
