@@ -1,18 +1,71 @@
+import * as Sharing from "expo-sharing";
 import * as LocalAuthentication from "expo-local-authentication";
-import { Bell, Save } from "lucide-react-native";
-import { useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, ScrollView, Switch, Text, TextInput, View } from "react-native";
+import { File, Paths } from "expo-file-system";
+import { Save } from "lucide-react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Alert,
+  Pressable,
+  ScrollView,
+  Switch,
+  Text,
+  TextInput,
+  View,
+  Platform,
+} from "react-native";
 
 import { Section } from "@/components/section";
 import { useDayRange } from "@/data/dayrange-store";
-import { GlucoseUnit, Reminder } from "@/types/domain";
+import { GlucoseUnit, Reminder, StorageHealth } from "@/types/domain";
 import { colors, radii } from "@/theme";
 
+const STORAGE_FILE_PREFIX = "dayrange";
+const DAYRANGE_BACKUP_FILE = "dayrange-backup";
+
+function formatBytes(bytes?: number) {
+  if (!bytes || bytes <= 0) {
+    return "unknown";
+  }
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${Math.round(bytes / 1024)} KB`;
+  }
+  return `${Math.round(bytes / (1024 * 1024))} MB`;
+}
+
 export default function ProfileScreen() {
-  const { profile, reminders, saveProfile, saveReminder } = useDayRange();
+  const {
+    profile,
+    reminders,
+    saveProfile,
+    saveReminder,
+    storageHealth,
+    createBackup,
+    previewRestore,
+    restoreFromText,
+    deleteAllData,
+    readings,
+  } = useDayRange();
+
   const [edits, setEdits] = useState<Partial<typeof profile>>({});
   const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [backupPassword, setBackupPassword] = useState("");
+  const [restorePassword, setRestorePassword] = useState("");
+  const [restoreText, setRestoreText] = useState("");
+  const [restoreTextMeta, setRestoreTextMeta] = useState<string>("");
+  const [restoreBusy, setRestoreBusy] = useState(false);
+  const [restorePreview, setRestorePreview] = useState<{ createdAt: string; readingCount: number; version: number } | null>(null);
+  const fileInputRef = useRef<any>(null);
   const draft = useMemo(() => ({ ...profile, ...edits }), [profile, edits]);
+
+  const health = useMemo<StorageHealth>(() => storageHealth ?? ({ status: "idle" } as StorageHealth), [storageHealth]);
+  const storageSummary = useMemo(() => {
+    const bits = health.storageUsed ?? 0;
+    const quota = health.storageQuota ?? 0;
+    return `${formatBytes(bits)} used ${quota ? ` / ${formatBytes(quota)}` : ""}`;
+  }, [health]);
 
   useEffect(() => {
     async function checkBiometrics() {
@@ -41,12 +94,144 @@ export default function ProfileScreen() {
     setEdits({});
   };
 
+  const onExportBackup = async () => {
+    if (backupPassword.length < 4) {
+      Alert.alert("Password required", "Use a strong backup password.");
+      return;
+    }
+    try {
+      const text = await createBackup(backupPassword);
+      const fileName = `${STORAGE_FILE_PREFIX}-backup-${new Date().toISOString().slice(0, 10)}.${DAYRANGE_BACKUP_FILE}`;
+
+      if (Platform.OS === "web") {
+        const url = URL.createObjectURL(new Blob([text], { type: "application/json;charset=utf-8" }));
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = fileName;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
+      } else {
+        const file = new File(Paths.cache, fileName);
+        if (file.exists) {
+          file.delete();
+        }
+        file.write(text);
+        await Sharing.shareAsync(file.uri, {
+          dialogTitle: "Save DayRange backup",
+          mimeType: "application/json",
+        });
+      }
+      Alert.alert("Backup ready", "Keep this file safe. Your password is required to restore.");
+    } catch (error) {
+      Alert.alert("Backup failed", error instanceof Error ? error.message : "Could not create backup.");
+    }
+  };
+
+  const onSelectBackupFile = () => {
+    if (Platform.OS === "web" && fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  const onLoadBackupFile = async (event: { target: { files: FileList | null } }) => {
+    const target = event.target as any;
+    const file = target.files?.[0];
+    if (!file) {
+      return;
+    }
+    const text = await file.text();
+    setRestoreText(text);
+    setRestoreTextMeta(file.name);
+  };
+
+  const inspectRestore = async () => {
+    if (!restoreText) {
+      Alert.alert("Select backup", "Load or paste a backup before inspecting.");
+      return;
+    }
+    if (!restorePassword) {
+      Alert.alert("Password required", "Enter the password used for this backup.");
+      return;
+    }
+    try {
+      setRestoreBusy(true);
+      const next = await previewRestore(restoreText, restorePassword);
+      setRestorePreview(next);
+    } catch (error) {
+      Alert.alert("Restore check failed", error instanceof Error ? error.message : "Could not read backup.");
+    } finally {
+      setRestoreBusy(false);
+    }
+  };
+
+  const performRestore = async () => {
+    if (!restorePreview) {
+      return;
+    }
+    Alert.alert(
+      "Restore backup",
+      `This will replace local data with ${restorePreview.readingCount} readings. Continue?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Replace now",
+          onPress: async () => {
+            try {
+              await restoreFromText(restoreText, restorePassword);
+              setRestorePreview(null);
+              setRestoreText("");
+              setRestorePassword("");
+              setRestoreTextMeta("");
+              Alert.alert("Restore complete", "DayRange data was replaced.");
+            } catch (error) {
+              Alert.alert("Restore failed", error instanceof Error ? error.message : "Could not restore backup.");
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const onDeleteAll = async () => {
+    Alert.alert(
+      "Delete all DayRange data",
+      "This cannot be undone. Create a backup first if you need a copy.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete everything",
+          onPress: async () => {
+            try {
+              await deleteAllData();
+              Alert.alert("Data removed", "Local DayRange records were deleted.");
+            } catch (error) {
+              Alert.alert("Delete failed", error instanceof Error ? error.message : "Could not delete data.");
+            }
+          },
+          style: "destructive",
+        },
+      ]
+    );
+  };
+
   return (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={{ padding: 20, gap: 18, paddingBottom: 36 }}
       style={{ backgroundColor: colors.background }}
     >
+      {Platform.OS === "web" ? (
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".dayrange-backup,application/json"
+          onChange={onLoadBackupFile as any}
+          style={{ display: "none" }}
+        />
+      ) : null}
+
       <Section title="Glucose Settings">
         <View style={{ gap: 12 }}>
           <Segmented
@@ -84,6 +269,155 @@ export default function ProfileScreen() {
         </View>
       </Section>
 
+      <Section title="Local Data">
+        <View style={{ gap: 10 }}>
+          <Text selectable style={{ color: colors.text, lineHeight: 20 }}>
+            Your DayRange records are stored in this app container.
+          </Text>
+      <Text selectable style={{ color: colors.textMuted, lineHeight: 20 }}>
+            {health.isPersistentStorage ? "Persistent storage granted" : "Persistent storage not granted"}
+          </Text>
+          <Text selectable style={{ color: colors.textMuted, lineHeight: 20 }}>
+            {storageSummary}
+          </Text>
+          <Text selectable style={{ color: colors.textMuted, lineHeight: 20 }}>
+            {readings.length} readings stored · Last save:
+            {health.lastSuccessAt ? ` ${new Date(health.lastSuccessAt).toLocaleString()}` : " never"}
+          </Text>
+          <Text selectable style={{ color: colors.textMuted, lineHeight: 20 }}>
+            Last state: {health.status}
+          </Text>
+          {health.lastSaveError ? (
+            <Text selectable style={{ color: colors.accent, lineHeight: 20 }}>
+              {health.lastSaveError}
+            </Text>
+          ) : null}
+        </View>
+      </Section>
+
+      <Section title="Backup & Restore">
+        <View style={{ gap: 10 }}>
+          <Text selectable style={{ color: colors.textMuted, lineHeight: 20 }}>
+            Create an encrypted local backup and restore it on Safari/Home Screen or another device in this app.
+          </Text>
+          <TextInput
+            value={backupPassword}
+            onChangeText={setBackupPassword}
+            placeholder="Backup password"
+            placeholderTextColor={colors.textSubtle}
+            secureTextEntry
+            style={fieldStyle()}
+          />
+          <Pressable
+            onPress={onExportBackup}
+            style={[buttonStyle(colors.primary), { backgroundColor: colors.primary }]}
+            accessibilityRole="button"
+          >
+            <Text selectable style={{ color: colors.onPrimary, fontWeight: "900" }}>
+              Create Backup
+            </Text>
+          </Pressable>
+
+          <Text selectable style={{ color: colors.textMuted, lineHeight: 20 }}>
+            Restore from backup file text below or upload file (web) and verify before replacing.
+          </Text>
+          <TextInput
+            value={restoreTextMeta}
+            editable={Platform.OS === "web"}
+            placeholder="Selected backup file"
+            placeholderTextColor={colors.textSubtle}
+            style={[fieldStyle(), { color: colors.textMuted }]}
+          />
+          {Platform.OS === "web" ? (
+            <Pressable onPress={onSelectBackupFile} style={[buttonStyle(colors.surface), { borderWidth: 1, borderColor: colors.border }]}>
+              <Text selectable style={{ color: colors.text, fontWeight: "900" }}>
+                Select Backup File
+              </Text>
+            </Pressable>
+          ) : null}
+          <TextInput
+            value={restoreText}
+            onChangeText={setRestoreText}
+            multiline
+            numberOfLines={4}
+            placeholder="Paste encrypted backup JSON (optional on native)"
+            placeholderTextColor={colors.textSubtle}
+            style={fieldStyle({ minHeight: 110 })}
+          />
+          <TextInput
+            value={restorePassword}
+            onChangeText={setRestorePassword}
+            placeholder="Backup password"
+            placeholderTextColor={colors.textSubtle}
+            secureTextEntry
+            style={fieldStyle()}
+          />
+          <Pressable disabled={restoreBusy} onPress={inspectRestore} style={[buttonStyle(colors.surface), { borderWidth: 1, borderColor: colors.border }]}>
+            <Text selectable style={{ color: colors.text, fontWeight: "900" }}>
+              Inspect Backup
+            </Text>
+          </Pressable>
+          {restorePreview ? (
+            <View style={{ backgroundColor: colors.surfaceAlt, borderRadius: radii.control, padding: 12, gap: 6 }}>
+              <Text selectable style={{ color: colors.text }}>
+                Backup created: {new Date(restorePreview.createdAt).toLocaleString()}
+              </Text>
+              <Text selectable style={{ color: colors.textMuted }}>
+                Readings: {restorePreview.readingCount}
+              </Text>
+              <Text selectable style={{ color: colors.textMuted }}>
+                Profile included: Yes
+              </Text>
+              <Pressable onPress={performRestore} style={[buttonStyle(colors.accent), { backgroundColor: colors.accent }]}>
+                <Text selectable style={{ color: colors.onPrimary, fontWeight: "900" }}>
+                  Restore and Replace Current Data
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+      </Section>
+
+      <Section title="Privacy">
+        <View
+          style={{
+            backgroundColor: colors.surface,
+            borderRadius: radii.card,
+            borderCurve: "continuous",
+            borderWidth: 1,
+            borderColor: colors.border,
+            padding: 14,
+            gap: 12,
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            <View style={{ flex: 1 }}>
+              <Text selectable style={{ color: colors.text, fontWeight: "800" }}>
+                Biometric app lock
+              </Text>
+              <Text selectable style={{ color: colors.textMuted }}>
+                {biometricAvailable
+                  ? "Unlock this local journal with device biometrics."
+                  : "No enrolled biometric lock is available on this device."}
+              </Text>
+            </View>
+            <Switch
+              disabled={!biometricAvailable}
+              value={draft.biometricLockEnabled && biometricAvailable}
+              onValueChange={(biometricLockEnabled) => setEdits((current) => ({ ...current, biometricLockEnabled }))}
+            />
+          </View>
+          <Text selectable style={{ color: colors.textMuted, lineHeight: 20 }}>
+            Data stays on this device. DayRange has no account system, cloud sync, ads, or remote analytics in this MVP.
+          </Text>
+          <Pressable onPress={onDeleteAll} style={[buttonStyle(colors.surface), { borderColor: colors.accent, borderWidth: 1 }]}>
+            <Text selectable style={{ color: colors.accent, fontWeight: "900" }}>
+              Delete All DayRange Data
+            </Text>
+          </Pressable>
+        </View>
+      </Section>
+
       <Section title="Local Reminders">
         <View style={{ gap: 10 }}>
           {reminders.map((reminder) => (
@@ -101,7 +435,6 @@ export default function ProfileScreen() {
                 gap: 12,
               }}
             >
-              <Bell color={colors.primary} size={20} />
               <View style={{ flex: 1 }}>
                 <Text selectable style={{ color: colors.text, fontWeight: "800" }}>
                   {reminder.label}
@@ -116,53 +449,10 @@ export default function ProfileScreen() {
         </View>
       </Section>
 
-      <Section title="Privacy">
-        <View
-          style={{
-            backgroundColor: colors.surface,
-            borderRadius: radii.card,
-            borderCurve: "continuous",
-            borderWidth: 1,
-            borderColor: colors.border,
-            padding: 14,
-            gap: 12,
-          }}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-            <View style={{ flex: 1 }}>
-              <Text selectable style={{ color: colors.text, fontWeight: "800" }}>
-                Biometric app lock
-              </Text>
-              <Text selectable style={{ color: colors.textMuted }}>
-                {biometricAvailable ? "Unlock this local journal with device biometrics." : "No enrolled biometric lock is available on this device."}
-              </Text>
-            </View>
-            <Switch
-              disabled={!biometricAvailable}
-              value={draft.biometricLockEnabled && biometricAvailable}
-              onValueChange={(biometricLockEnabled) => setEdits((current) => ({ ...current, biometricLockEnabled }))}
-            />
-          </View>
-          <Text selectable style={{ color: colors.textMuted, lineHeight: 20 }}>
-            Data stays on this device. DayRange has no account system, cloud sync, ads, or third-party
-            analytics in this MVP.
-          </Text>
-        </View>
-      </Section>
-
       <Pressable
         accessibilityRole="button"
         onPress={save}
-        style={{
-          minHeight: 52,
-          borderRadius: 14,
-          borderCurve: "continuous",
-          backgroundColor: colors.primary,
-          alignItems: "center",
-          justifyContent: "center",
-          flexDirection: "row",
-          gap: 8,
-        }}
+        style={buttonStyle(colors.primary)}
       >
         <Save color={colors.onPrimary} size={18} />
         <Text selectable style={{ color: colors.onPrimary, fontWeight: "900" }}>
@@ -171,6 +461,35 @@ export default function ProfileScreen() {
       </Pressable>
     </ScrollView>
   );
+}
+
+function buttonStyle(backgroundColor: string) {
+  return {
+    minHeight: 52,
+    borderRadius: 14,
+    borderCurve: "continuous" as "continuous",
+    backgroundColor,
+    alignItems: "center" as "center",
+    justifyContent: "center" as "center",
+    flexDirection: "row" as "row",
+    gap: 8,
+    borderWidth: backgroundColor === colors.surface ? 1 : 0,
+    borderColor: backgroundColor === colors.surface ? colors.border : undefined,
+  } as const;
+}
+
+function fieldStyle(overrides?: { minHeight?: number }) {
+  return {
+    minHeight: overrides?.minHeight ?? 46,
+    borderRadius: 12,
+    borderCurve: "continuous" as "continuous",
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    color: colors.text,
+  } as const;
 }
 
 function Segmented({
@@ -229,16 +548,7 @@ function Field({
         onChangeText={onChangeText}
         keyboardType={keyboardType}
         placeholderTextColor={colors.textSubtle}
-        style={{
-          minHeight: 46,
-          borderRadius: 12,
-          borderCurve: "continuous",
-          backgroundColor: colors.surface,
-          borderWidth: 1,
-          borderColor: colors.border,
-          paddingHorizontal: 12,
-          color: colors.text,
-        }}
+        style={fieldStyle()}
       />
     </View>
   );

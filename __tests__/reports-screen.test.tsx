@@ -42,6 +42,10 @@ describe("ReportsScreen", () => {
       saveProfile: jest.fn(),
       saveReminder: jest.fn(),
       addReportHistory: jest.fn(),
+      createBackup: jest.fn(),
+      previewRestore: jest.fn(),
+      restoreFromText: jest.fn(),
+      deleteAllData: jest.fn(),
     });
   });
 
@@ -70,6 +74,10 @@ describe("ReportsScreen", () => {
       saveProfile: jest.fn(),
       saveReminder: jest.fn(),
       addReportHistory: jest.fn(),
+      createBackup: jest.fn(),
+      previewRestore: jest.fn(),
+      restoreFromText: jest.fn(),
+      deleteAllData: jest.fn(),
     });
 
     const view = await render(<ReportsScreen />);

@@ -1,7 +1,7 @@
 import type { SQLiteDatabase } from "expo-sqlite";
 
 import { defaultReminders } from "@/constants/options";
-import { Profile, Reading, Reminder, ReportHistoryItem } from "@/types/domain";
+import { BackupData, Profile, Reading, ReportHistoryItem, Reminder } from "@/types/domain";
 
 export const defaultProfile: Profile = {
   id: "default",
@@ -59,6 +59,38 @@ type ReportHistoryRow = {
   platform: string;
 };
 
+async function withTransaction<T>(db: SQLiteDatabase, callback: () => Promise<T>): Promise<T> {
+  await db.execAsync("BEGIN IMMEDIATE");
+  try {
+    const result = await callback();
+    await db.execAsync("COMMIT");
+    return result;
+  } catch (error) {
+    await db.execAsync("ROLLBACK");
+    throw error;
+  }
+}
+
+async function addContextEventsForReading(db: SQLiteDatabase, reading: Reading) {
+  const contextItems = [
+    ["meal", reading.mealLabel, reading.carbsGrams === null ? "" : `${reading.carbsGrams}g carbs`],
+    ["medication", reading.medicationNote, ""],
+    ["activity", reading.activityNote, ""],
+  ].filter(([, label]) => Boolean(label));
+
+  for (const [kind, label, value] of contextItems) {
+    await db.runAsync(
+      "INSERT INTO context_events (id, reading_id, kind, label, value, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+      makeId(kind),
+      reading.id,
+      kind,
+      label,
+      value,
+      reading.recordedAt
+    );
+  }
+}
+
 export async function migrateDatabase(db: SQLiteDatabase) {
   const current = await db.getFirstAsync<{ user_version: number }>("PRAGMA user_version");
   let version = current?.user_version ?? 0;
@@ -107,6 +139,19 @@ export async function migrateDatabase(db: SQLiteDatabase) {
         enabled INTEGER NOT NULL,
         notification_id TEXT
       );
+      CREATE TABLE IF NOT EXISTS report_history (
+        id TEXT PRIMARY KEY NOT NULL,
+        file_name TEXT NOT NULL,
+        range_type TEXT NOT NULL,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        generated_at TEXT NOT NULL,
+        reading_count INTEGER NOT NULL,
+        part_index INTEGER NOT NULL,
+        part_count INTEGER NOT NULL,
+        platform TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS report_history_generated_at_idx ON report_history(generated_at);
     `);
 
     await db.runAsync(
@@ -133,30 +178,18 @@ export async function migrateDatabase(db: SQLiteDatabase) {
     await db.execAsync("PRAGMA user_version = 1");
     version = 1;
   }
-
-  if (version < 2) {
-    await db.execAsync(`
-      CREATE TABLE IF NOT EXISTS report_history (
-        id TEXT PRIMARY KEY NOT NULL,
-        file_name TEXT NOT NULL,
-        range_type TEXT NOT NULL,
-        start_date TEXT NOT NULL,
-        end_date TEXT NOT NULL,
-        generated_at TEXT NOT NULL,
-        reading_count INTEGER NOT NULL,
-        part_index INTEGER NOT NULL,
-        part_count INTEGER NOT NULL,
-        platform TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS report_history_generated_at_idx ON report_history(generated_at);
-      PRAGMA user_version = 2;
-    `);
-  }
 }
 
 export async function getProfile(db: SQLiteDatabase): Promise<Profile> {
   const row = await db.getFirstAsync<{ data: string }>("SELECT data FROM profile WHERE id = ?", "default");
-  return row ? { ...defaultProfile, ...JSON.parse(row.data) } : defaultProfile;
+  if (!row) {
+    return defaultProfile;
+  }
+  try {
+    return { ...defaultProfile, ...JSON.parse(row.data) };
+  } catch {
+    return defaultProfile;
+  }
 }
 
 export async function setProfile(db: SQLiteDatabase, profile: Profile): Promise<void> {
@@ -170,72 +203,67 @@ export async function setProfile(db: SQLiteDatabase, profile: Profile): Promise<
 
 export async function getReadings(db: SQLiteDatabase): Promise<Reading[]> {
   const rows = await db.getAllAsync<ReadingRow>("SELECT * FROM readings ORDER BY recorded_at DESC");
-  return rows.map((row) => ({
-    id: row.id,
-    glucoseMgdl: row.glucose_mgdl,
-    displayValue: row.display_value,
-    displayUnit: row.display_unit === "mmol/L" ? "mmol/L" : "mg/dL",
-    recordedAt: row.recorded_at,
-    timing: row.timing as Reading["timing"],
-    mealLabel: row.meal_label ?? "",
-    carbsGrams: row.carbs_grams,
-    medicationNote: row.medication_note ?? "",
-    activityNote: row.activity_note ?? "",
-    notes: row.notes ?? "",
-    tags: JSON.parse(row.tags),
-    symptoms: JSON.parse(row.symptoms),
-    mood: row.mood as Reading["mood"],
-    source: row.source,
-    createdAt: row.created_at,
-  }));
+  return rows
+    .map((row) => {
+      try {
+        return {
+          id: row.id,
+          glucoseMgdl: row.glucose_mgdl,
+          displayValue: row.display_value,
+          displayUnit: row.display_unit === "mmol/L" ? "mmol/L" : "mg/dL",
+          recordedAt: row.recorded_at,
+          timing: row.timing as Reading["timing"],
+          mealLabel: row.meal_label ?? "",
+          carbsGrams: row.carbs_grams,
+          medicationNote: row.medication_note ?? "",
+          activityNote: row.activity_note ?? "",
+          notes: row.notes ?? "",
+          tags: JSON.parse(row.tags),
+          symptoms: JSON.parse(row.symptoms),
+          mood: row.mood as Reading["mood"],
+          source: row.source,
+          createdAt: row.created_at,
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter((item): item is Reading => Boolean(item));
 }
 
 export async function insertReading(db: SQLiteDatabase, reading: Reading): Promise<void> {
-  await db.runAsync(
-    `INSERT INTO readings (
-      id, glucose_mgdl, display_value, display_unit, recorded_at, timing, meal_label, carbs_grams,
-      medication_note, activity_note, notes, tags, symptoms, mood, source, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    reading.id,
-    reading.glucoseMgdl,
-    reading.displayValue,
-    reading.displayUnit,
-    reading.recordedAt,
-    reading.timing,
-    reading.mealLabel,
-    reading.carbsGrams,
-    reading.medicationNote,
-    reading.activityNote,
-    reading.notes,
-    JSON.stringify(reading.tags),
-    JSON.stringify(reading.symptoms),
-    reading.mood,
-    reading.source,
-    reading.createdAt
-  );
-
-  const contextItems = [
-    ["meal", reading.mealLabel, reading.carbsGrams === null ? "" : `${reading.carbsGrams}g carbs`],
-    ["medication", reading.medicationNote, ""],
-    ["activity", reading.activityNote, ""],
-  ].filter(([, label]) => Boolean(label));
-
-  for (const [kind, label, value] of contextItems) {
+  await withTransaction(db, async () => {
     await db.runAsync(
-      "INSERT INTO context_events (id, reading_id, kind, label, value, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-      makeId(kind),
+      `INSERT INTO readings (
+        id, glucose_mgdl, display_value, display_unit, recorded_at, timing, meal_label, carbs_grams,
+        medication_note, activity_note, notes, tags, symptoms, mood, source, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       reading.id,
-      kind,
-      label,
-      value,
-      reading.recordedAt
+      reading.glucoseMgdl,
+      reading.displayValue,
+      reading.displayUnit,
+      reading.recordedAt,
+      reading.timing,
+      reading.mealLabel,
+      reading.carbsGrams,
+      reading.medicationNote,
+      reading.activityNote,
+      reading.notes,
+      JSON.stringify(reading.tags),
+      JSON.stringify(reading.symptoms),
+      reading.mood,
+      reading.source,
+      reading.createdAt
     );
-  }
+    await addContextEventsForReading(db, reading);
+  });
 }
 
 export async function removeReading(db: SQLiteDatabase, id: string): Promise<void> {
-  await db.runAsync("DELETE FROM context_events WHERE reading_id = ?", id);
-  await db.runAsync("DELETE FROM readings WHERE id = ?", id);
+  await withTransaction(db, async () => {
+    await db.runAsync("DELETE FROM context_events WHERE reading_id = ?", id);
+    await db.runAsync("DELETE FROM readings WHERE id = ?", id);
+  });
 }
 
 export async function getReminders(db: SQLiteDatabase): Promise<Reminder[]> {
@@ -302,6 +330,111 @@ export async function insertReportHistory(db: SQLiteDatabase, items: ReportHisto
       item.platform
     );
   }
+}
+
+export async function replaceAllData(db: SQLiteDatabase, backup: BackupData): Promise<void> {
+  await withTransaction(db, async () => {
+    await db.execAsync("DELETE FROM context_events");
+    await db.execAsync("DELETE FROM readings");
+    await db.execAsync("DELETE FROM reminders");
+    await db.execAsync("DELETE FROM report_history");
+    await db.execAsync("DELETE FROM profile");
+
+    await db.runAsync(
+      "INSERT OR REPLACE INTO profile (id, data, updated_at) VALUES (?, ?, ?)",
+      defaultProfile.id,
+      JSON.stringify(backup.profile ?? defaultProfile),
+      backup.profile?.updatedAt ?? new Date(0).toISOString()
+    );
+
+    for (const reminder of backup.reminders) {
+      await db.runAsync(
+        `INSERT INTO reminders (id, kind, label, hour, minute, enabled, notification_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        reminder.id,
+        reminder.kind,
+        reminder.label,
+        reminder.hour,
+        reminder.minute,
+        reminder.enabled ? 1 : 0,
+        reminder.notificationId
+      );
+    }
+
+    for (const reading of backup.readings) {
+      await db.runAsync(
+        `INSERT INTO readings (
+          id, glucose_mgdl, display_value, display_unit, recorded_at, timing, meal_label, carbs_grams,
+          medication_note, activity_note, notes, tags, symptoms, mood, source, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        reading.id,
+        reading.glucoseMgdl,
+        reading.displayValue,
+        reading.displayUnit,
+        reading.recordedAt,
+        reading.timing,
+        reading.mealLabel,
+        reading.carbsGrams,
+        reading.medicationNote,
+        reading.activityNote,
+        reading.notes,
+        JSON.stringify(reading.tags),
+        JSON.stringify(reading.symptoms),
+        reading.mood,
+        reading.source,
+        reading.createdAt
+      );
+      await addContextEventsForReading(db, reading);
+    }
+
+    for (const item of backup.reportHistory) {
+      await db.runAsync(
+        `INSERT OR REPLACE INTO report_history (
+          id, file_name, range_type, start_date, end_date, generated_at, reading_count,
+          part_index, part_count, platform
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        item.id,
+        item.fileName,
+        item.rangeType,
+        item.startDate,
+        item.endDate,
+        item.generatedAt,
+        item.readingCount,
+        item.partIndex,
+        item.partCount,
+        item.platform
+      );
+    }
+  });
+}
+
+export async function clearAllData(db: SQLiteDatabase): Promise<void> {
+  await withTransaction(db, async () => {
+    await db.execAsync("DELETE FROM context_events");
+    await db.execAsync("DELETE FROM readings");
+    await db.execAsync("DELETE FROM reminders");
+    await db.execAsync("DELETE FROM report_history");
+    await db.execAsync("DELETE FROM profile");
+    await db.runAsync(
+      "INSERT OR REPLACE INTO profile (id, data, updated_at) VALUES (?, ?, ?)",
+      defaultProfile.id,
+      JSON.stringify(defaultProfile),
+      defaultProfile.updatedAt
+    );
+    for (const reminder of defaultReminders) {
+      await db.runAsync(
+        `INSERT OR REPLACE INTO reminders (id, kind, label, hour, minute, enabled, notification_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        reminder.id,
+        reminder.kind,
+        reminder.label,
+        reminder.hour,
+        reminder.minute,
+        reminder.enabled ? 1 : 0,
+        reminder.notificationId
+      );
+    }
+  });
 }
 
 export function makeId(prefix: string): string {

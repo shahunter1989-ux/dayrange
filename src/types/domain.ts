@@ -46,6 +46,39 @@ export type ReportExportPart = {
   partCount: number;
 };
 
+export type StorageHealthStatus = "idle" | "saving" | "saved" | "error";
+
+export type StorageHealth = {
+  status: StorageHealthStatus;
+  lastSuccessAt?: string;
+  lastSaveError?: string;
+  isPersistentStorage?: boolean;
+  storageUsed?: number;
+  storageQuota?: number;
+};
+
+export type BackupData = {
+  profile: Profile;
+  readings: Reading[];
+  reminders: Reminder[];
+  reportHistory: ReportHistoryItem[];
+};
+
+export type BackupEnvelope = {
+  format: "dayrange-backup";
+  version: 1;
+  createdAt: string;
+  appVersion: string;
+  data: BackupData;
+};
+
+export type BackupRestoreInfo = {
+  createdAt: string;
+  readingCount: number;
+  profileIncluded: boolean;
+  version: number;
+};
+
 export type ReportExportPlan = {
   rangeType: ReportRangeType;
   startDate: string;
