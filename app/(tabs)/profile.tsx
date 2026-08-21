@@ -1,8 +1,9 @@
 import * as Sharing from "expo-sharing";
 import * as LocalAuthentication from "expo-local-authentication";
-import { File, Paths } from "expo-file-system";
+import * as FileSystem from "expo-file-system";
 import { Save } from "lucide-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
+import * as DocumentPicker from "expo-document-picker";
 import {
   Alert,
   Pressable,
@@ -105,7 +106,7 @@ export default function ProfileScreen() {
         anchor.remove();
         URL.revokeObjectURL(url);
       } else {
-        const file = new File(Paths.cache, fileName);
+        const file = new FileSystem.File(FileSystem.Paths.cache, fileName);
         if (file.exists) {
           file.delete();
         }
@@ -138,13 +139,14 @@ export default function ProfileScreen() {
     setRestoreTextMeta(file.name);
   };
 
-  const performRestore = async () => {
-    if (!restoreText) {
+  const performRestore = async (textOverride?: string) => {
+    const text = textOverride ?? restoreText;
+    if (!text) {
       Alert.alert("No backup loaded", "Load or paste a backup file first.");
       return;
     }
     try {
-      const next = await previewRestore(restoreText);
+      const next = await previewRestore(text);
       const countText = `${next.readingCount} readings`;
       Alert.alert("Restore backup", `This will replace your current data with ${countText}. Continue?`, [
         { text: "Cancel", style: "cancel" },
@@ -152,7 +154,7 @@ export default function ProfileScreen() {
           text: "Replace now",
           onPress: async () => {
             try {
-              await restoreFromText(restoreText);
+              await restoreFromText(text);
               setRestoreText("");
               setRestoreTextMeta("");
               Alert.alert("Restore complete", "DayRange data was replaced.");
@@ -165,6 +167,20 @@ export default function ProfileScreen() {
     } catch (error) {
       Alert.alert("Restore failed", error instanceof Error ? error.message : "Could not read backup.");
     }
+  };
+
+  const onSelectBackupFileNative = async () => {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: "application/json",
+      copyToCacheDirectory: true,
+      multiple: false,
+    });
+    if (result.canceled || !result.assets?.length) {
+      return;
+    }
+    const asset = result.assets[0];
+    const backupText = await new FileSystem.File(asset.uri).text();
+    await performRestore(backupText);
   };
 
   const onDeleteAll = async () => {
@@ -284,36 +300,49 @@ export default function ProfileScreen() {
           </Pressable>
 
           <Text selectable style={{ color: colors.textMuted, lineHeight: 20 }}>
-            Restore by loading one backup file (JSON) and tapping Restore.
+            {Platform.OS === "web"
+              ? "Restore: pick one backup file, then confirm."
+              : "Restore: choose one backup file from Files or Documents and confirm."}
           </Text>
-          <TextInput
-            value={restoreTextMeta}
-            editable={Platform.OS === "web"}
-            placeholder="Selected backup file"
-            placeholderTextColor={colors.textSubtle}
-            style={[fieldStyle(), { color: colors.textMuted }]}
-          />
           {Platform.OS === "web" ? (
-            <Pressable onPress={onSelectBackupFile} style={[buttonStyle(colors.surface), { borderWidth: 1, borderColor: colors.border }]}>
+            <>
+              <TextInput
+                value={restoreTextMeta}
+                editable={false}
+                placeholder="Selected backup file"
+                placeholderTextColor={colors.textSubtle}
+                style={[fieldStyle(), { color: colors.textMuted }]}
+              />
+              <Pressable onPress={onSelectBackupFile} style={[buttonStyle(colors.surface), { borderWidth: 1, borderColor: colors.border }]}>
+                <Text selectable style={{ color: colors.text, fontWeight: "900" }}>
+                  Choose Backup File
+                </Text>
+              </Pressable>
+              <Text selectable style={{ color: colors.textSubtle, lineHeight: 20 }}>
+                If a restore fails, paste the file text below.
+              </Text>
+              <TextInput
+                value={restoreText}
+                onChangeText={setRestoreText}
+                multiline
+                numberOfLines={4}
+                placeholder="Paste backup JSON here (optional)"
+                placeholderTextColor={colors.textSubtle}
+                style={fieldStyle({ minHeight: 110 })}
+              />
+              <Pressable onPress={() => performRestore()} style={[buttonStyle(colors.surface), { borderWidth: 1, borderColor: colors.border }]}>
+                <Text selectable style={{ color: colors.text, fontWeight: "900" }}>
+                  Restore Backup
+                </Text>
+              </Pressable>
+            </>
+          ) : (
+            <Pressable onPress={onSelectBackupFileNative} style={[buttonStyle(colors.surface), { borderWidth: 1, borderColor: colors.border }]}>
               <Text selectable style={{ color: colors.text, fontWeight: "900" }}>
-                Select Backup File
+                Choose Backup File
               </Text>
             </Pressable>
-          ) : null}
-          <TextInput
-            value={restoreText}
-            onChangeText={setRestoreText}
-            multiline
-            numberOfLines={4}
-            placeholder="Paste backup JSON here (optional)"
-            placeholderTextColor={colors.textSubtle}
-            style={fieldStyle({ minHeight: 110 })}
-          />
-          <Pressable onPress={performRestore} style={[buttonStyle(colors.surface), { borderWidth: 1, borderColor: colors.border }]}>
-            <Text selectable style={{ color: colors.text, fontWeight: "900" }}>
-              Restore from pasted/uploaded backup
-            </Text>
-          </Pressable>
+          )}
         </View>
       </Section>
 
