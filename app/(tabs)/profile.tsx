@@ -287,7 +287,7 @@ export default function ProfileScreen() {
       <Section title="Backup & Restore">
         <View style={{ gap: 10 }}>
           <Text selectable style={{ color: colors.textMuted, lineHeight: 20 }}>
-            Create a local backup and restore it on Safari/Home Screen or another device in this app.
+            Keep one file for all your readings before changing phone.
           </Text>
           <Pressable
             onPress={onExportBackup}
@@ -295,51 +295,73 @@ export default function ProfileScreen() {
             accessibilityRole="button"
           >
             <Text selectable style={{ color: colors.onPrimary, fontWeight: "900" }}>
-              Create Backup
+              1) Save backup file
             </Text>
           </Pressable>
 
           <Text selectable style={{ color: colors.textMuted, lineHeight: 20 }}>
-            {Platform.OS === "web"
-              ? "Restore: pick one backup file, then confirm."
-              : "Restore: choose one backup file from Files or Documents and confirm."}
+            2) On a new phone, open DayRange and tap Restore.
           </Text>
+
           {Platform.OS === "web" ? (
             <>
-              <TextInput
-                value={restoreTextMeta}
-                editable={false}
-                placeholder="Selected backup file"
-                placeholderTextColor={colors.textSubtle}
-                style={[fieldStyle(), { color: colors.textMuted }]}
-              />
-              <Pressable onPress={onSelectBackupFile} style={[buttonStyle(colors.surface), { borderWidth: 1, borderColor: colors.border }]}>
-                <Text selectable style={{ color: colors.text, fontWeight: "900" }}>
-                  Choose Backup File
+              <View style={{ gap: 8 }}>
+                <Text selectable style={{ color: colors.textMuted, lineHeight: 20 }}>
+                  {restoreTextMeta ? `Loaded: ${restoreTextMeta}` : "Choose your backup file to continue."}
                 </Text>
-              </Pressable>
-              <Text selectable style={{ color: colors.textSubtle, lineHeight: 20 }}>
-                If a restore fails, paste the file text below.
-              </Text>
-              <TextInput
-                value={restoreText}
-                onChangeText={setRestoreText}
-                multiline
-                numberOfLines={4}
-                placeholder="Paste backup JSON here (optional)"
-                placeholderTextColor={colors.textSubtle}
-                style={fieldStyle({ minHeight: 110 })}
-              />
-              <Pressable onPress={() => performRestore()} style={[buttonStyle(colors.surface), { borderWidth: 1, borderColor: colors.border }]}>
-                <Text selectable style={{ color: colors.text, fontWeight: "900" }}>
-                  Restore Backup
+                <Pressable onPress={onSelectBackupFile} style={[buttonStyle(colors.surface), { borderWidth: 1, borderColor: colors.border }]}>
+                  <Text selectable style={{ color: colors.text, fontWeight: "900" }}>
+                    Choose backup file
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => performRestore()}
+                  style={[buttonStyle(colors.surface), { borderWidth: 1, borderColor: colors.border }]}
+                  disabled={!restoreText}
+                >
+                  <Text selectable style={{ color: colors.text, fontWeight: "900" }}>
+                    Restore from this file
+                  </Text>
+                </Pressable>
+              </View>
+
+              <View
+                style={{
+                  borderWidth: 1,
+                  borderRadius: 12,
+                  borderColor: colors.border,
+                  backgroundColor: colors.surface,
+                  padding: 10,
+                  gap: 4,
+                }}
+              >
+                <Text selectable style={{ color: colors.textMuted, lineHeight: 20 }}>
+                  Optional (advanced): paste backup text here.
                 </Text>
-              </Pressable>
+                <TextInput
+                  value={restoreText}
+                  onChangeText={setRestoreText}
+                  multiline
+                  numberOfLines={4}
+                  placeholder="Paste backup JSON here"
+                  placeholderTextColor={colors.textSubtle}
+                  style={fieldStyle({ minHeight: 96 })}
+                />
+                <Pressable
+                  onPress={() => performRestore()}
+                  style={[buttonStyle(colors.surface), { borderWidth: 1, borderColor: colors.border }]}
+                  disabled={!restoreText}
+                >
+                  <Text selectable style={{ color: colors.text, fontWeight: "900" }}>
+                    Restore pasted text
+                  </Text>
+                </Pressable>
+              </View>
             </>
           ) : (
             <Pressable onPress={onSelectBackupFileNative} style={[buttonStyle(colors.surface), { borderWidth: 1, borderColor: colors.border }]}>
               <Text selectable style={{ color: colors.text, fontWeight: "900" }}>
-                Choose Backup File
+                2) Restore from backup file
               </Text>
             </Pressable>
           )}
