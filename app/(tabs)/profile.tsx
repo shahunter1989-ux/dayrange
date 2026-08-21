@@ -51,12 +51,8 @@ export default function ProfileScreen() {
 
   const [edits, setEdits] = useState<Partial<typeof profile>>({});
   const [biometricAvailable, setBiometricAvailable] = useState(false);
-  const [backupPassword, setBackupPassword] = useState("");
-  const [restorePassword, setRestorePassword] = useState("");
   const [restoreText, setRestoreText] = useState("");
   const [restoreTextMeta, setRestoreTextMeta] = useState<string>("");
-  const [restoreBusy, setRestoreBusy] = useState(false);
-  const [restorePreview, setRestorePreview] = useState<{ createdAt: string; readingCount: number; version: number } | null>(null);
   const fileInputRef = useRef<any>(null);
   const draft = useMemo(() => ({ ...profile, ...edits }), [profile, edits]);
 
@@ -95,12 +91,8 @@ export default function ProfileScreen() {
   };
 
   const onExportBackup = async () => {
-    if (backupPassword.length < 4) {
-      Alert.alert("Password required", "Use a strong backup password.");
-      return;
-    }
     try {
-      const text = await createBackup(backupPassword);
+      const text = await createBackup();
       const fileName = `${STORAGE_FILE_PREFIX}-backup-${new Date().toISOString().slice(0, 10)}.${DAYRANGE_BACKUP_FILE}`;
 
       if (Platform.OS === "web") {
@@ -123,7 +115,7 @@ export default function ProfileScreen() {
           mimeType: "application/json",
         });
       }
-      Alert.alert("Backup ready", "Keep this file safe. Your password is required to restore.");
+      Alert.alert("Backup ready", "Keep this backup file where you can find it later.");
     } catch (error) {
       Alert.alert("Backup failed", error instanceof Error ? error.message : "Could not create backup.");
     }
@@ -146,52 +138,33 @@ export default function ProfileScreen() {
     setRestoreTextMeta(file.name);
   };
 
-  const inspectRestore = async () => {
+  const performRestore = async () => {
     if (!restoreText) {
-      Alert.alert("Select backup", "Load or paste a backup before inspecting.");
-      return;
-    }
-    if (!restorePassword) {
-      Alert.alert("Password required", "Enter the password used for this backup.");
+      Alert.alert("No backup loaded", "Load or paste a backup file first.");
       return;
     }
     try {
-      setRestoreBusy(true);
-      const next = await previewRestore(restoreText, restorePassword);
-      setRestorePreview(next);
-    } catch (error) {
-      Alert.alert("Restore check failed", error instanceof Error ? error.message : "Could not read backup.");
-    } finally {
-      setRestoreBusy(false);
-    }
-  };
-
-  const performRestore = async () => {
-    if (!restorePreview) {
-      return;
-    }
-    Alert.alert(
-      "Restore backup",
-      `This will replace local data with ${restorePreview.readingCount} readings. Continue?`,
-      [
+      const next = await previewRestore(restoreText);
+      const countText = `${next.readingCount} readings`;
+      Alert.alert("Restore backup", `This will replace your current data with ${countText}. Continue?`, [
         { text: "Cancel", style: "cancel" },
         {
           text: "Replace now",
           onPress: async () => {
             try {
-              await restoreFromText(restoreText, restorePassword);
-              setRestorePreview(null);
+              await restoreFromText(restoreText);
               setRestoreText("");
-              setRestorePassword("");
               setRestoreTextMeta("");
               Alert.alert("Restore complete", "DayRange data was replaced.");
-            } catch (error) {
-              Alert.alert("Restore failed", error instanceof Error ? error.message : "Could not restore backup.");
+            } catch (restoreError) {
+              Alert.alert("Restore failed", restoreError instanceof Error ? restoreError.message : "Could not restore backup.");
             }
           },
         },
-      ]
-    );
+      ]);
+    } catch (error) {
+      Alert.alert("Restore failed", error instanceof Error ? error.message : "Could not read backup.");
+    }
   };
 
   const onDeleteAll = async () => {
@@ -298,16 +271,8 @@ export default function ProfileScreen() {
       <Section title="Backup & Restore">
         <View style={{ gap: 10 }}>
           <Text selectable style={{ color: colors.textMuted, lineHeight: 20 }}>
-            Create an encrypted local backup and restore it on Safari/Home Screen or another device in this app.
+            Create a local backup and restore it on Safari/Home Screen or another device in this app.
           </Text>
-          <TextInput
-            value={backupPassword}
-            onChangeText={setBackupPassword}
-            placeholder="Backup password"
-            placeholderTextColor={colors.textSubtle}
-            secureTextEntry
-            style={fieldStyle()}
-          />
           <Pressable
             onPress={onExportBackup}
             style={[buttonStyle(colors.primary), { backgroundColor: colors.primary }]}
@@ -319,7 +284,7 @@ export default function ProfileScreen() {
           </Pressable>
 
           <Text selectable style={{ color: colors.textMuted, lineHeight: 20 }}>
-            Restore from backup file text below or upload file (web) and verify before replacing.
+            Restore by loading one backup file (JSON) and tapping Restore.
           </Text>
           <TextInput
             value={restoreTextMeta}
@@ -340,41 +305,15 @@ export default function ProfileScreen() {
             onChangeText={setRestoreText}
             multiline
             numberOfLines={4}
-            placeholder="Paste encrypted backup JSON (optional on native)"
+            placeholder="Paste backup JSON here (optional)"
             placeholderTextColor={colors.textSubtle}
             style={fieldStyle({ minHeight: 110 })}
           />
-          <TextInput
-            value={restorePassword}
-            onChangeText={setRestorePassword}
-            placeholder="Backup password"
-            placeholderTextColor={colors.textSubtle}
-            secureTextEntry
-            style={fieldStyle()}
-          />
-          <Pressable disabled={restoreBusy} onPress={inspectRestore} style={[buttonStyle(colors.surface), { borderWidth: 1, borderColor: colors.border }]}>
+          <Pressable onPress={performRestore} style={[buttonStyle(colors.surface), { borderWidth: 1, borderColor: colors.border }]}>
             <Text selectable style={{ color: colors.text, fontWeight: "900" }}>
-              Inspect Backup
+              Restore from pasted/uploaded backup
             </Text>
           </Pressable>
-          {restorePreview ? (
-            <View style={{ backgroundColor: colors.surfaceAlt, borderRadius: radii.control, padding: 12, gap: 6 }}>
-              <Text selectable style={{ color: colors.text }}>
-                Backup created: {new Date(restorePreview.createdAt).toLocaleString()}
-              </Text>
-              <Text selectable style={{ color: colors.textMuted }}>
-                Readings: {restorePreview.readingCount}
-              </Text>
-              <Text selectable style={{ color: colors.textMuted }}>
-                Profile included: Yes
-              </Text>
-              <Pressable onPress={performRestore} style={[buttonStyle(colors.accent), { backgroundColor: colors.accent }]}>
-                <Text selectable style={{ color: colors.onPrimary, fontWeight: "900" }}>
-                  Restore and Replace Current Data
-                </Text>
-              </Pressable>
-            </View>
-          ) : null}
         </View>
       </Section>
 

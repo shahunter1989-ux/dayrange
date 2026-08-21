@@ -34,9 +34,9 @@ type DayRangeContextValue = {
   saveProfile: (profile: Profile) => Promise<void>;
   saveReminder: (reminder: Reminder) => Promise<void>;
   addReportHistory: (items: ReportHistoryItem[]) => Promise<void>;
-  createBackup: (password: string) => Promise<string>;
-  previewRestore: (fileText: string, password: string) => Promise<BackupRestoreInfo>;
-  restoreFromText: (fileText: string, password: string) => Promise<void>;
+  createBackup: (password?: string) => Promise<string>;
+  previewRestore: (fileText: string, password?: string) => Promise<BackupRestoreInfo>;
+  restoreFromText: (fileText: string, password?: string) => Promise<void>;
   deleteAllData: () => Promise<void>;
 };
 
@@ -180,10 +180,7 @@ export function DayRangeProvider({ children }: { children: ReactNode }) {
     [db, withStorageWrite]
   );
 
-  const createBackup = useCallback(async (password: string): Promise<string> => {
-    if (!password) {
-      throw new Error("Password is required.");
-    }
+  const createBackup = useCallback(async (_password?: string): Promise<string> => {
     const next = await readStore(db);
     return createEncryptedBackup(
       {
@@ -192,18 +189,18 @@ export function DayRangeProvider({ children }: { children: ReactNode }) {
         readings: next.readings,
         reportHistory: next.reportHistory,
       },
-      password
+      undefined
     );
   }, [db]);
 
-  const previewRestore = useCallback(async (fileText: string, password: string) => {
-    const result = await parseEncryptedBackup(fileText, password);
+  const previewRestore = useCallback(async (fileText: string) => {
+    const result = await parseEncryptedBackup(fileText, undefined);
     return result.restoreInfo;
   }, []);
 
   const restoreFromText = useCallback(
-    async (fileText: string, password: string) => {
-      const { data } = await parseEncryptedBackup(fileText, password);
+    async (fileText: string) => {
+      const { data } = await parseEncryptedBackup(fileText, undefined);
       await withStorageWrite(async () => {
         await replaceAllData(db, {
           profile: data.profile,

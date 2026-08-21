@@ -52,9 +52,9 @@ type DayRangeContextValue = {
   saveProfile: (profile: Profile) => Promise<void>;
   saveReminder: (reminder: Reminder) => Promise<void>;
   addReportHistory: (items: ReportHistoryItem[]) => Promise<void>;
-  createBackup: (password: string) => Promise<string>;
-  previewRestore: (fileText: string, password: string) => Promise<BackupRestoreInfo>;
-  restoreFromText: (fileText: string, password: string) => Promise<void>;
+  createBackup: (password?: string) => Promise<string>;
+  previewRestore: (fileText: string, password?: string) => Promise<BackupRestoreInfo>;
+  restoreFromText: (fileText: string, password?: string) => Promise<void>;
   deleteAllData: () => Promise<void>;
 };
 
@@ -513,11 +513,7 @@ export function DayRangeProvider({ children }: { children: ReactNode }) {
     [persist]
   );
 
-  const createBackup = useCallback(
-    async (password: string): Promise<string> => {
-      if (!password) {
-        throw new Error("Password is required.");
-      }
+  const createBackup = useCallback(async (): Promise<string> => {
       const latest = await loadAll(dbRef.current || (await openWebDatabase()));
       return createEncryptedBackup(
         {
@@ -526,19 +522,17 @@ export function DayRangeProvider({ children }: { children: ReactNode }) {
           readings: latest.readings,
           reportHistory: latest.reportHistory,
         },
-        password
+        undefined
       );
-    },
-    []
-  );
+  }, []);
 
-  const previewRestore = useCallback(async (fileText: string, password: string): Promise<BackupRestoreInfo> => {
-    const { restoreInfo } = await parseEncryptedBackup(fileText, password);
+  const previewRestore = useCallback(async (fileText: string): Promise<BackupRestoreInfo> => {
+    const { restoreInfo } = await parseEncryptedBackup(fileText, undefined);
     return restoreInfo;
   }, []);
 
-  const restoreFromText = useCallback(async (fileText: string, password: string) => {
-    const { data } = await parseEncryptedBackup(fileText, password);
+  const restoreFromText = useCallback(async (fileText: string) => {
+    const { data } = await parseEncryptedBackup(fileText, undefined);
     const payload = normalizeBackupPayload(data);
     await persist(async () => {
       const db = dbRef.current ?? (await openWebDatabase());
